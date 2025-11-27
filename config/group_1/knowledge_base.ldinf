@@ -1,0 +1,10 @@
+# Se cucinare e apparecchiare sono fatti, allora il banchetto è pronto
+done(cook) & done(set_table) -> done(prepare_banquet)
+
+# Rules to derive actions from resources
+has(ingredients) & has(oven) -> done(cook)
+has(plates) & has(tablecloth) -> done(set_table)
+
+# Cost definitions: MENTAL cost is ENERGY. Physical costs are explicit resources.
+cost(cook, ENERGY:10, ingredients:10, gas:5)
+cost(set_table, ENERGY:5, plates:0, tablecloth:0)
