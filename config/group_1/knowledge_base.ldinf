@@ -1,10 +1,23 @@
-# Se cucinare e apparecchiare sono fatti, allora il banchetto è pronto
-done(cook) & done(set_table) -> done(prepare_banquet)
-
-# Rules to derive actions from resources
-has(ingredients) & has(oven) -> done(cook)
+# Regole di inferenza
+# Nota: usiamo cook_main_dish come azione astratta
+has(ingredients) & has(oven) -> done(cook_main_dish)
 has(plates) & has(tablecloth) -> done(set_table)
+done(cook_main_dish) & done(set_table) -> done(prepare_banquet)
 
-# Cost definitions: MENTAL cost is ENERGY. Physical costs are explicit resources.
-cost(cook, ENERGY:10, ingredients:10, gas:5)
-cost(set_table, ENERGY:5, plates:0, tablecloth:0)
+# EQUIVALENZE (Cl) [cite: 99]
+# Cucinare pasta o bistecca equivale a cucinare il piatto principale
+equiv(cook_main_dish, cook_pasta)
+equiv(cook_main_dish, cook_steak)
+
+# COSTI (Cost)
+cost(cook_pasta, ENERGY:5, ingredients:2, gas:2)
+cost(cook_steak, ENERGY:8, ingredients:5, gas:3)
+cost(set_table, ENERGY:2, plates:0, tablecloth:0)
+
+# Costo base per ragionare (vdash)
+inference_cost(2)
+
+# PREFERENZE (P) [cite: 182]
+# L'agente preferisce cucinare la bistecca (valore 10) rispetto alla pasta (valore 5)
+pref(cook_steak, 10)
+pref(cook_pasta, 5)

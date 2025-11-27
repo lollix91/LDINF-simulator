@@ -2,13 +2,13 @@ package com.ldinf.sim.core;
 
 import com.ldinf.sim.model.*;
 import java.util.*;
+import java.util.stream.Collectors;
 
 public class Agent {
     private final String id;
     private final AgentMemory memory;
     private final Budget budget;
     private final CommunicationChannel comms;
-    
     private Atom personalGoal;
 
     public Agent(String id, AgentMemory memory, Budget budget, CommunicationChannel comms) {
@@ -19,102 +19,145 @@ public class Agent {
     }
 
     public void setGoal(String goalPredicate) {
-        this.personalGoal = LDinfParser.parse(goalPredicate) instanceof Atom a ? a : null;
+        Formula f = LDinfParser.parse(goalPredicate);
+        if (f instanceof Atom a) {
+            this.personalGoal = a;
+        }
     }
     
-    // Serve al Main per controllare lo stato finale
     public AgentMemory getMemory() { 
         return memory; 
     }
 
-    // Ciclo di ragionamento
     public boolean reasonAndAct() {
         boolean actionTaken = false;
-
-        // 1. Prima priorità: Raggiungere il Goal Personale
+        
+        // 1. Goal Personale
         if (personalGoal != null && !memory.getWorkingMemory().contains(personalGoal)) {
-            if (attemptToDerive(personalGoal)) {
+            if (performBestActionFor(personalGoal)) {
                 actionTaken = true;
             }
         }
 
-        // 2. Seconda priorità: Dedurre il Goal di Gruppo (se esiste e non è ancora noto)
+        // 2. Goal di Gruppo
         Atom groupGoal = memory.getGroupGoal();
         if (groupGoal != null && !memory.getWorkingMemory().contains(groupGoal)) {
-            // Provo a dedurlo solo se ho già soddisfatto il personale o se non posso fare altro
-            // (Nel paper gli agenti sono cooperativi, quindi ci provano sempre)
-            System.out.println("AGENTE " + id + ": Controlla se può dedurre il goal comune " + groupGoal);
-            if (attemptToDerive(groupGoal)) {
+            if (performBestActionFor(groupGoal)) {
                 actionTaken = true;
-                // Importante: Comunica agli altri che il goal comune è raggiunto!
                 comms.broadcast(id, groupGoal);
             }
         }
-
         return actionTaken;
     }
 
-    // Logica di inferenza generica (valida per qualsiasi goal)
-    private boolean attemptToDerive(Atom targetGoal) {
-        // Cerca una regola che concluda con il targetGoal
-        Optional<Implication> rule = memory.getKnowledgeBase().stream()
+    // IMPLEMENTAZIONE DEL SELETTORE F (Sezione 2.2 del paper)
+    private boolean performBestActionFor(Atom targetGoal) {
+        // A. Trova tutte le regole che portano al goal
+        List<Implication> candidateRules = memory.getKnowledgeBase().stream()
                 .filter(impl -> impl.conclusion().equals(targetGoal))
-                .findFirst();
+                .filter(impl -> checkPremises(impl.premises())) 
+                .collect(Collectors.toList());
 
-        if (rule.isPresent()) {
-            Implication i = rule.get();
+        if (candidateRules.isEmpty()) {
+            return false;
+        }
+
+        // B. Costruisci l'insieme delle azioni "Candidabili"
+        List<ActionCandidate> candidates = new ArrayList<>();
+
+        for (Implication rule : candidateRules) {
+            String baseActionName = extractActionName(rule.conclusion());
             
-            // Verifica se le premesse sono soddisfatte nella Working Memory
-            if (checkPremises(i.premises())) {
+            // Trova classe di equivalenza (Cl) [cite: 99]
+            Set<String> equivalentActions = memory.getEquivalentActions(baseActionName);
+
+            for (String actName : equivalentActions) {
+                ActionCost cost = memory.getActionCosts().get(actName);
                 
-                // Determina il costo
-                String actionName = i.conclusion().predicate(); // Usa il predicato come nome azione
-                if (!i.conclusion().args().isEmpty()) {
-                    actionName = i.conclusion().args().get(0); // O l'argomento (es. "cook" in done(cook))
-                }
-                
-                ActionCost cost = memory.getActionCosts().get(actionName);
-                
-                // Caso A: Azione Fisica (ha un costo definito esplicitamente nel file)
+                // CASO 1: Azione Fisica (ha un costo esplicito)
                 if (cost != null) {
-                    System.out.println("AGENTE " + id + ": Tenta azione " + actionName + " (Costo Energy: " + cost.mentalCost() + ")");
-                    if (budget.tryConsume(cost.mentalCost(), cost.physicalResources())) {
-                        System.out.println("AGENTE " + id + ": *** AZIONE ESEGUITA *** " + targetGoal);
-                        memory.getWorkingMemory().add(targetGoal);
-                        comms.broadcast(id, targetGoal);
-                        return true;
-                    } else {
-                        System.out.println("AGENTE " + id + ": Budget insufficiente per " + actionName);
+                    // Controlla Budget (B1 e B2) [cite: 251]
+                    if (budget.canAfford(cost.mentalCost(), cost.physicalResources())) {
+                        int pref = memory.getPreference(actName); // P(i,w,A) [cite: 183]
+                        candidates.add(new ActionCandidate(actName, cost, pref, true));
                     }
                 } 
-                // Caso B: Inferenza Mentale Pura (es. done(A) & done(B) -> done(C))
-                // Nel paper L-DINF anche le inferenze costano energia. Assumiamo costo 1 di default se non specificato.
+                // CASO 2: Azione Mentale / Astratta
                 else {
-                    // Verifichiamo se abbiamo budget per pensare (Costo fisso 1 Energy per inferenza semplice)
-                    if (budget.tryConsume(1, Map.of())) {
-                        System.out.println("AGENTE " + id + ": Inferenza logica riuscita -> " + targetGoal);
-                        memory.getWorkingMemory().add(targetGoal);
-                        return true;
+                    // FIX: Verifica se è un'azione astratta che ha corrispondenti fisici
+                    // (stream catena corretta con parentesi e punto e virgola)
+                    boolean isAbstractForPhysical = equivalentActions.stream()
+                        .anyMatch(eq -> memory.getActionCosts().containsKey(eq));
+
+                    if (!isAbstractForPhysical) {
+                        int mentalCost = memory.getBaseInferenceCost();
+                        if (budget.canAfford(mentalCost, Collections.emptyMap())) {
+                            // Creiamo un costo fittizio per l'inferenza
+                            ActionCost infCost = new ActionCost(actName, mentalCost, Collections.emptyMap());
+                            candidates.add(new ActionCandidate(actName, infCost, 0, false));
+                        }
                     }
                 }
             }
         }
-        return false;
+
+        if (candidates.isEmpty()) {
+            return false;
+        }
+
+        // C. Selezione (Funzione F) 
+        // Criterio: Massima Preferenza, a parità di preferenza Minimo Costo
+        // NOTA: Qui ho corretto c.cost in c.cost() perché è un record
+        candidates.sort(Comparator
+                .comparingInt(ActionCandidate::preference).reversed() // P desc
+                .thenComparingInt(c -> sumResources(c.cost().physicalResources())) // Cost asc
+        );
+
+        ActionCandidate best = candidates.get(0);
+        
+        // Esecuzione
+        if (best.isPhysical()) {
+            System.out.println("AGENTE " + id + ": Selezionata azione fisica '" + best.name() + "' (Pref: " + best.preference() + ")");
+            budget.consume(best.cost().mentalCost(), best.cost().physicalResources());
+            System.out.println("AGENTE " + id + ": *** ESEGUITO *** " + best.name() + " -> " + targetGoal);
+        } else {
+            System.out.println("AGENTE " + id + ": Inferenza logica '" + best.name() + "' (Costo Energy: " + best.cost().mentalCost() + ")");
+            budget.consume(best.cost().mentalCost(), Collections.emptyMap());
+        }
+
+        memory.getWorkingMemory().add(targetGoal);
+        
+        if(best.isPhysical()) {
+            comms.broadcast(id, targetGoal);
+        }
+        
+        return true;
     }
-    
+
+    private int sumResources(Map<String, Integer> res) {
+        if (res == null) return 0;
+        return res.values().stream().mapToInt(Integer::intValue).sum();
+    }
+
+    private String extractActionName(Atom atom) {
+        return atom.args().isEmpty() ? atom.predicate() : atom.args().get(0);
+    }
+
     private boolean checkPremises(List<Atom> premises) {
         return premises.stream().allMatch(p -> memory.getWorkingMemory().contains(p));
     }
 
     public void receiveMessage(Atom info) {
         if (!memory.getWorkingMemory().contains(info)) {
-            // System.out.println("AGENTE " + id + ": Ricevuto info " + info); // Decommenta per debug verboso
             memory.getWorkingMemory().add(info);
         }
     }
     
-    @Override
-    public String toString() {
-        return id;
+    @Override 
+    public String toString() { 
+        return id; 
     }
+
+    // Record interno per la selezione
+    private record ActionCandidate(String name, ActionCost cost, int preference, boolean isPhysical) {}
 }

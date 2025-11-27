@@ -1,3 +1,3 @@
 package com.ldinf.sim.model;
 
-public sealed interface Formula permits Atom, Implication, ActionCost {}
+public sealed interface Formula permits Atom, Implication, ActionCost, Preference, Equivalence, InferenceCost {}
