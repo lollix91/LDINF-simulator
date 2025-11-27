@@ -97,26 +97,38 @@ public class SimulationMain {
             return;
         }
 
-        // 5. Execution
+      // 5. Execution
         System.out.println("\n--- STARTING SIMULATION ---");
-        boolean allFinished = false;
+        boolean commonGoalMet = false;
         int maxSteps = 10;
         int step = 0;
 
-        while (!allFinished && step < maxSteps) {
+        // Il ciclo continua finché il goal comune NON è raggiunto e non superiamo i passi massimi
+        while (!commonGoalMet && step < maxSteps) {
             step++;
             System.out.println("\n>>> STEP " + step);
-            boolean globalActivity = false;
-            boolean allPersonalMet = true;
+            boolean anyoneDidAnything = false;
             
             for (Agent a : allAgents) {
-                // reasonAndAct() ritorna true se ha fatto qualcosa o se il goal è già raggiunto
-                // Qui assumiamo una logica semplice: continuiamo finché qualcuno agisce
+                // reasonAndAct ora ritorna true SOLO se ha compiuto una NUOVA azione/inferenza
                 boolean acted = a.reasonAndAct(); 
-                if (acted) globalActivity = true;
+                if (acted) anyoneDidAnything = true;
             }
             
-            if (!globalActivity) allFinished = true; // Nessuno ha più nulla da fare
+            // Verifica se il goal comune è stato raggiunto in questo step
+            for (String groupId : groupGoalsMap.keySet()) {
+                Atom goal = groupGoalsMap.get(groupId);
+                if (checkGroupGoal(groupId, goal, allAgents)) {
+                    commonGoalMet = true;
+                    System.out.println(">>> SUCCESS: Group " + groupId + " achieved goal " + goal + " at step " + step);
+                }
+            }
+
+            // Se nessuno ha fatto nulla e il goal non è raggiunto, inutile continuare
+            if (!anyoneDidAnything && !commonGoalMet) {
+                System.out.println(">>> STALL: No agents performed actions this step.");
+                break;
+            }
         }
         
         // 6. Final Report
@@ -125,24 +137,26 @@ public class SimulationMain {
             Atom commonGoal = groupGoalsMap.get(groupId);
             boolean isCommonGoalMet = checkGroupGoal(groupId, commonGoal, allAgents);
             System.out.println("Group " + groupId + " Common Goal (" + commonGoal + ") met? " + isCommonGoalMet);
+            // Visualizza il ragionamento (chi lo sa?)
+            if (isCommonGoalMet) {
+                allAgents.stream()
+                    .filter(a -> a.getMemory().getWorkingMemory().contains(commonGoal))
+                    .forEach(a -> System.out.println("   -> Known by " + a));
+            }
         }
     }
 
     // Verifica se il goal comune è nella working memory di ALMENO UN agente del gruppo
-    // (Nel paper L-DINF la conoscenza è condivisa o comunicata)
     private static boolean checkGroupGoal(String groupId, Atom goal, List<Agent> agents) {
         return agents.stream()
-            .filter(a -> a.toString().startsWith(groupId)) // Filtra agenti del gruppo (usiamo toString o getter ID)
+            .filter(a -> a.toString().startsWith(groupId)) 
             .anyMatch(a -> checkMemoryForAtom(a, goal));
     }
 
-    // Helper sporco perché non abbiamo esposto getter ID pubblici puliti nell'esempio precedente
+    // --- CORREZIONE APPLICATA QUI SOTTO ---
     private static boolean checkMemoryForAtom(Agent a, Atom goal) {
-        // In un codice reale useremmo a.getMemory().getWorkingMemory().contains(goal)
-        // Ma dobbiamo esporre Agent.getMemory() se non l'abbiamo fatto.
-        // Simuliamo l'accesso o assumiamo che CommunicationChannel abbia diffuso il fatto a tutti.
-        // Modifica Agent.java aggiungendo: public AgentMemory getMemory() { return memory; }
-        return false; // TODO: Aggiungi getter in Agent.java per farlo funzionare realmente
+        // Ora accediamo davvero alla memoria dell'agente tramite il getter
+        return a.getMemory().getWorkingMemory().contains(goal);
     }
 
     private static Budget parseTotalBudget(String line) {
