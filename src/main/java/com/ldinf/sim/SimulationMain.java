@@ -16,8 +16,8 @@ public class SimulationMain {
         CommunicationChannel channel = new CommunicationChannel();
         List<Agent> allAgents = new ArrayList<>();
         // Mappa per tenere traccia del goal comune per ogni gruppo
-        Map<String, Atom> groupGoalsMap = new HashMap<>(); 
-
+        Map<String, List<Atom>> groupGoalsMap = new HashMap<>();
+        
         try {
             // 1. Scan for Group Folders
             List<Path> groupDirs = Files.list(Paths.get(CONFIG_ROOT))
@@ -38,12 +38,13 @@ public class SimulationMain {
                 Path commonGoalPath = groupPath.resolve("common_goal.ldinf");
                 if (Files.exists(commonGoalPath)) {
                     List<String> lines = FileLoader.readRealFile(commonGoalPath.toString());
-                    if (!lines.isEmpty()) {
-                        Formula f = LDinfParser.parse(lines.get(0));
+                    for (String line : lines) {
+                        Formula f = LDinfParser.parse(line);
                         if (f instanceof Atom a) {
-                            sharedMemoryTemplate.setGroupGoal(a); 
-                            groupGoalsMap.put(groupId, a);
-                            System.out.println("  -> Common Goal: " + a);
+                            sharedMemoryTemplate.addGroupGoal(a); // Usa il nuovo metodo
+                            // Nota: groupGoalsMap ora dovrebbe mappare String -> List<Atom> 
+                            groupGoalsMap.computeIfAbsent(groupId, k -> new ArrayList<>()).add(a);
+                            System.out.println("  -> Added Common Goal: " + a);
                         }
                     }
                 }
@@ -93,8 +94,9 @@ public class SimulationMain {
                     myMemory.addKnowledge(new InferenceCost(sharedMemoryTemplate.getBaseInferenceCost()));
 
                     // F. Copia Goal Comune
-                    if(sharedMemoryTemplate.getGroupGoal() != null) 
-                        myMemory.setGroupGoal(sharedMemoryTemplate.getGroupGoal());
+                    for (Atom g : sharedMemoryTemplate.getGroupGoals()) {
+                        myMemory.addGroupGoal(g);
+                    }
                     
                     // G. Carica Working Memory Specifica (Bi)
                     List<String> wm = FileLoader.readRealFile(agentPath.resolve("working_memory.ldinf").toString());
@@ -137,10 +139,14 @@ public class SimulationMain {
             
             // Check Common Goals
             for (String groupId : groupGoalsMap.keySet()) {
-                Atom goal = groupGoalsMap.get(groupId);
-                if (checkGroupGoal(groupId, goal, allAgents)) {
-                    commonGoalMet = true;
-                    System.out.println(">>> SUCCESS: Group " + groupId + " achieved goal " + goal + " at step " + step);
+                List<Atom> goals = groupGoalsMap.get(groupId);
+                // Verifica se TUTTI i goal di questo gruppo sono soddisfatti
+                boolean allGoalsMet = goals.stream()
+                        .allMatch(g -> checkGroupGoal(groupId, g, allAgents));
+                        
+                if (allGoalsMet) {
+                    commonGoalMet = true; // Questo ferma la simulazione
+                    // System.out.println(">>> SUCCESS: Group " + groupId + " achieved ALL goals at step " + step);
                 }
             }
 
@@ -153,14 +159,19 @@ public class SimulationMain {
         // 9. Final Report
         System.out.println("\n--- FINAL REPORT ---");
         for (String groupId : groupGoalsMap.keySet()) {
-            Atom commonGoal = groupGoalsMap.get(groupId);
-            boolean isCommonGoalMet = checkGroupGoal(groupId, commonGoal, allAgents);
-            System.out.println("Group " + groupId + " Common Goal (" + commonGoal + ") met? " + isCommonGoalMet);
+            List<Atom> goals = groupGoalsMap.get(groupId);
+            System.out.println("Group: " + groupId);
             
-            if (isCommonGoalMet) {
-                allAgents.stream()
-                    .filter(a -> a.getMemory().getWorkingMemory().contains(commonGoal))
-                    .forEach(a -> System.out.println("   -> Known by " + a));
+            for (Atom commonGoal : goals) {
+                boolean isCommonGoalMet = checkGroupGoal(groupId, commonGoal, allAgents);
+                System.out.println("  Goal (" + commonGoal + ") met? " + (isCommonGoalMet ? "YES" : "NO"));
+                
+                if (isCommonGoalMet) {
+                    allAgents.stream()
+                        .filter(a -> a.toString().startsWith(groupId)) // Filtra per gruppo
+                        .filter(a -> a.getMemory().getWorkingMemory().contains(commonGoal))
+                        .forEach(a -> System.out.println("     -> Known by " + a));
+                }
             }
         }
     }

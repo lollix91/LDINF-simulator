@@ -40,63 +40,55 @@ public class Agent {
         }
 
         // 2. Goal di Gruppo
-        Atom groupGoal = memory.getGroupGoal();
-        if (groupGoal != null && !memory.getWorkingMemory().contains(groupGoal)) {
-            if (performBestActionFor(groupGoal)) {
-                actionTaken = true;
-                comms.broadcast(id, groupGoal);
+        List<Atom> groupGoals = memory.getGroupGoals();
+        for (Atom targetGoal : groupGoals) {
+            // Se il goal non è ancora stato raggiunto (non è in working memory)
+            if (!memory.getWorkingMemory().contains(targetGoal)) {
+                // Proviamo a soddisfarlo
+                if (performBestActionFor(targetGoal)) {
+                    actionTaken = true;
+                    comms.broadcast(id, targetGoal);
+                    
+                    // Opzionale: se un agente può fare solo un'azione per turno, 
+                    // aggiungi 'break' qui per fermare l'agente dopo il primo successo.
+                    break; 
+                }
             }
         }
         return actionTaken;
     }
 
-    // IMPLEMENTAZIONE DEL SELETTORE F (Sezione 2.2 del paper)
     private boolean performBestActionFor(Atom targetGoal) {
-        // A. Trova tutte le regole che portano al goal
-        List<Implication> candidateRules = memory.getKnowledgeBase().stream()
+        // 1. Trova tutte le regole che CONCLUDONO con il goal target
+        List<Implication> potentialRules = memory.getKnowledgeBase().stream()
                 .filter(impl -> impl.conclusion().equals(targetGoal))
-                .filter(impl -> checkPremises(impl.premises())) 
                 .collect(Collectors.toList());
 
-        if (candidateRules.isEmpty()) {
-            return false;
-        }
+        if (potentialRules.isEmpty()) return false;
 
-        // B. Costruisci l'insieme delle azioni "Candidabili"
         List<ActionCandidate> candidates = new ArrayList<>();
 
-        for (Implication rule : candidateRules) {
-            String baseActionName = extractActionName(rule.conclusion());
+        for (Implication rule : potentialRules) {
+            // Dividiamo le premesse in soddifatte e mancanti
+            List<Atom> missingPremises = rule.premises().stream()
+                    .filter(p -> !memory.getWorkingMemory().contains(p))
+                    .collect(Collectors.toList());
+
+            // CASO A: Tutte le premesse sono soddisfatte (es. has(ingr) -> cook)
+            // L'azione da fare è direttamente la conclusione della regola
+            if (missingPremises.isEmpty()) {
+                String baseActionName = extractActionName(rule.conclusion());
+                generateCandidatesForAction(baseActionName, candidates);
+            }
             
-            // Trova classe di equivalenza (Cl) [cite: 99]
-            Set<String> equivalentActions = memory.getEquivalentActions(baseActionName);
-
-            for (String actName : equivalentActions) {
-                ActionCost cost = memory.getActionCosts().get(actName);
-                
-                // CASO 1: Azione Fisica (ha un costo esplicito)
-                if (cost != null) {
-                    // Controlla Budget (B1 e B2) [cite: 251]
-                    if (budget.canAfford(cost.mentalCost(), cost.physicalResources())) {
-                        int pref = memory.getPreference(actName); // P(i,w,A) [cite: 183]
-                        candidates.add(new ActionCandidate(actName, cost, pref, true));
-                    }
-                } 
-                // CASO 2: Azione Mentale / Astratta
-                else {
-                    // FIX: Verifica se è un'azione astratta che ha corrispondenti fisici
-                    // (stream catena corretta con parentesi e punto e virgola)
-                    boolean isAbstractForPhysical = equivalentActions.stream()
-                        .anyMatch(eq -> memory.getActionCosts().containsKey(eq));
-
-                    if (!isAbstractForPhysical) {
-                        int mentalCost = memory.getBaseInferenceCost();
-                        if (budget.canAfford(mentalCost, Collections.emptyMap())) {
-                            // Creiamo un costo fittizio per l'inferenza
-                            ActionCost infCost = new ActionCost(actName, mentalCost, Collections.emptyMap());
-                            candidates.add(new ActionCandidate(actName, infCost, 0, false));
-                        }
-                    }
+            // CASO B: Mancano delle premesse (es. ... & done(clear_table) -> clean)
+            // Controlliamo se una delle premesse mancanti è un'azione che possiamo fare
+            else {
+                for (Atom missing : missingPremises) {
+                    String missingActionName = extractActionName(missing);
+                    // Se la premessa mancante è un'azione fattibile (ha un costo o è equivalente a una che lo ha)
+                    // Allora proviamo a eseguire QUELLA azione per sbloccare la regola.
+                    generateCandidatesForAction(missingActionName, candidates);
                 }
             }
         }
@@ -105,33 +97,79 @@ public class Agent {
             return false;
         }
 
-        // C. Selezione (Funzione F) 
-        // Criterio: Massima Preferenza, a parità di preferenza Minimo Costo
-        // NOTA: Qui ho corretto c.cost in c.cost() perché è un record
+        // C. Selezione (Funzione F) - Invariata
         candidates.sort(Comparator
-                .comparingInt(ActionCandidate::preference).reversed() // P desc
-                .thenComparingInt(c -> sumResources(c.cost().physicalResources())) // Cost asc
+                .comparingInt(ActionCandidate::preference).reversed()
+                .thenComparingInt(c -> sumResources(c.cost().physicalResources()))
         );
 
         ActionCandidate best = candidates.get(0);
-        
+
         // Esecuzione
         if (best.isPhysical()) {
             System.out.println("AGENTE " + id + ": Selezionata azione fisica '" + best.name() + "' (Pref: " + best.preference() + ")");
             budget.consume(best.cost().mentalCost(), best.cost().physicalResources());
-            System.out.println("AGENTE " + id + ": *** ESEGUITO *** " + best.name() + " -> " + targetGoal);
+            
+            // NOTA: Qui costruiamo l'atomo di risultato. 
+            // Se l'azione era un sotto-goal (es. clear_table), l'atomo prodotto è done(clear_table).
+            // Se era un goal diretto (cook_main_dish), è done(cook_main_dish).
+            Atom resultAtom = Atom.of("done", best.name()); // Assumiamo convenzione done(X)
+            
+            System.out.println("AGENTE " + id + ": *** ESEGUITO *** " + best.name() + " -> " + resultAtom);
+            memory.getWorkingMemory().add(resultAtom);
+            comms.broadcast(id, resultAtom);
+            
+            // IMPORTANTE: Se abbiamo agito per un sotto-goal, il goal principale (targetGoal)
+            // non è ancora raggiunto, lo sarà per inferenza al prossimo step.
+            // Se invece era un'azione diretta (Caso A), aggiungiamo anche il targetGoal.
+            if (ruleConclusionMatches(best.name(), targetGoal)) {
+                 memory.getWorkingMemory().add(targetGoal);
+            }
+
         } else {
+            // Inferenza pura
             System.out.println("AGENTE " + id + ": Inferenza logica '" + best.name() + "' (Costo Energy: " + best.cost().mentalCost() + ")");
             budget.consume(best.cost().mentalCost(), Collections.emptyMap());
-        }
-
-        memory.getWorkingMemory().add(targetGoal);
-        
-        if(best.isPhysical()) {
-            comms.broadcast(id, targetGoal);
+            memory.getWorkingMemory().add(targetGoal); // L'inferenza produce direttamente il goal
         }
         
         return true;
+    }
+
+    // Metodo helper per generare candidati dato un nome azione (astrae la logica di equivalenza)
+    private void generateCandidatesForAction(String actionName, List<ActionCandidate> candidates) {
+        Set<String> equivalentActions = memory.getEquivalentActions(actionName);
+        for (String actName : equivalentActions) {
+            ActionCost cost = memory.getActionCosts().get(actName);
+            
+            // 1. Azione Fisica
+            if (cost != null) {
+                if (budget.canAfford(cost.mentalCost(), cost.physicalResources())) {
+                    int pref = memory.getPreference(actName);
+                    candidates.add(new ActionCandidate(actName, cost, pref, true));
+                }
+            } 
+            // 2. Inferenza (Azione Mentale)
+            else {
+                // Verifichiamo che non sia un'astrazione di un fisico (es. cook_main_dish)
+                boolean isAbstractForPhysical = equivalentActions.stream()
+                        .anyMatch(eq -> memory.getActionCosts().containsKey(eq));
+
+                if (!isAbstractForPhysical) {
+                    int mentalCost = memory.getBaseInferenceCost();
+                    if (budget.canAfford(mentalCost, Collections.emptyMap())) {
+                        ActionCost infCost = new ActionCost(actName, mentalCost, Collections.emptyMap());
+                        candidates.add(new ActionCandidate(actName, infCost, 0, false));
+                    }
+                }
+            }
+        }
+    }
+
+    // Helper per verificare se l'azione eseguita soddisfa direttamente il goal richiesto
+    private boolean ruleConclusionMatches(String actionName, Atom targetGoal) {
+        String targetName = extractActionName(targetGoal);
+        return memory.getEquivalentActions(actionName).contains(targetName);
     }
 
     private int sumResources(Map<String, Integer> res) {

@@ -12,7 +12,7 @@ public class AgentMemory {
     private final List<Equivalence> equivalences = new ArrayList<>(); 
     private int baseInferenceCost = 1; 
     
-    private Atom groupGoal;
+    private final List<Atom> groupGoals = new ArrayList<>();
 
     public void addKnowledge(Formula f) {
         if (f == null) return;
@@ -44,8 +44,14 @@ public class AgentMemory {
     public List<Implication> getKnowledgeBase() { return knowledgeBase; }
     public Set<Atom> getWorkingMemory() { return workingMemory; }
     public Map<String, ActionCost> getActionCosts() { return actionCosts; }
-    public void setGroupGoal(Atom goal) { this.groupGoal = goal; }
-    public Atom getGroupGoal() { return groupGoal; }
+    public void addGroupGoal(Atom goal) {
+        if (!groupGoals.contains(goal)) {
+            this.groupGoals.add(goal);
+        }
+    }
+    public List<Atom> getGroupGoals() {
+        return groupGoals;
+    }
 
     // --- NUOVI GETTER NECESSARI PER LA COPIA ---
     public List<Equivalence> getEquivalences() { return equivalences; }

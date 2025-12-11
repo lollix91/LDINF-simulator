@@ -3,6 +3,7 @@
 has(ingredients) & has(oven) -> done(cook_main_dish)
 has(plates) & has(tablecloth) -> done(set_table)
 done(cook_main_dish) & done(set_table) -> done(prepare_banquet)
+done(prepare_banquet) & done(clear_table) -> done(clean_banquet)
 
 # EQUIVALENZE (Cl) [cite: 99]
 # Cucinare pasta o bistecca equivale a cucinare il piatto principale
@@ -13,6 +14,8 @@ equiv(cook_main_dish, cook_steak)
 cost(cook_pasta, ENERGY:5, ingredients:2, gas:2)
 cost(cook_steak, ENERGY:8, ingredients:5, gas:3)
 cost(set_table, ENERGY:2, plates:0, tablecloth:0)
+cost(clear_table, ENERGY:45, plates:0)
+
 
 # Costo base per ragionare (vdash)
 inference_cost(2)
@@ -21,3 +24,4 @@ inference_cost(2)
 # L'agente preferisce cucinare la bistecca (valore 10) rispetto alla pasta (valore 5)
 pref(cook_steak, 10)
 pref(cook_pasta, 5)
+pref(clear_table, 5)
