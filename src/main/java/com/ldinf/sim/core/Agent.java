@@ -8,6 +8,7 @@ public class Agent {
     private final String id;
     private String groupId;
     private int groupSize = 1; // |G| - used for mental cost sharing C1/|G|
+    private Group group; // Reference to the agent's group (for enabled_w, doer, cost sharing)
     private final AgentMemory memory;
     private final Budget budget;
     private final CommunicationChannel comms;
@@ -24,6 +25,8 @@ public class Agent {
     public void setGroupId(String groupId) { this.groupId = groupId; }
     public int getGroupSize() { return groupSize; }
     public void setGroupSize(int groupSize) { this.groupSize = Math.max(1, groupSize); }
+    public Group getGroup() { return group; }
+    public void setGroup(Group group) { this.group = group; }
     public Budget getBudget() { return budget; }
 
     public void setGoal(String goalPredicate) {
@@ -177,9 +180,15 @@ public class Agent {
             }
 
         } else {
-            // Inferenza pura
-            System.out.println("AGENTE " + id + ": Inferenza logica '" + best.name() + "' (Costo Energy: " + best.cost().mentalCost() + ")");
-            budget.consume(best.cost().mentalCost(), Collections.emptyMap());
+            // Inferenza pura (Azione Mentale)
+            // Paper: doer_w(i,G,α) selects the agent; ALL agents pay C1/|G|
+            int sharedCost = best.cost().mentalCost();
+            System.out.println("AGENTE " + id + ": Inferenza logica '" + best.name() + "' (Costo Energy: " + sharedCost + ", shared across group)");
+            budget.consume(sharedCost, Collections.emptyMap()); // doer pays
+            // Paper: B1^{[G:α]}(i,w) = B1(i,w) - C1/|G| for EACH i ∈ G
+            if (group != null) {
+                group.deductMentalCostFromAll(sharedCost, this); // all other agents pay too
+            }
             memory.getWorkingMemory().add(targetGoal); // L'inferenza produce direttamente il goal
         }
         
@@ -214,7 +223,9 @@ public class Agent {
                     // Costo mentale diviso per |G| (cost sharing dal paper)
                     int baseCost = memory.getBaseInferenceCost();
                     int sharedCost = Math.max(1, baseCost / groupSize);
-                    if (budget.canAfford(sharedCost, Collections.emptyMap())) {
+                    // Paper enabled_w(G,α): C1(j,α,w)/|G| ≤ min_{h∈G} B1(h,w)
+                    int minGroupB1 = (group != null) ? group.getMinMentalBudget() : budget.getMentalBudget();
+                    if (sharedCost <= minGroupB1) {
                         ActionCost infCost = new ActionCost(actName, sharedCost, Collections.emptyMap());
                         candidates.add(new ActionCandidate(actName, infCost, 0, false));
                     }

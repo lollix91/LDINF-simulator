@@ -119,6 +119,7 @@ public class SimulationMain {
                     Agent agent = new Agent(agentId, myMemory, myBudget, channel);
                     agent.setGroupId(groupId);
                     agent.setGroupSize(numAgents); // |G| for mental cost sharing C1/|G|
+                    agent.setGroup(group); // Reference to Group for enabled_w and cost sharing
 
                     // Load Personal Goal
                     List<String> goalLines = FileLoader.readRealFile(agentPath.resolve("personal_goal.ldinf").toString());
@@ -207,9 +208,9 @@ public class SimulationMain {
             // Report budget residuo
             System.out.println("  Agent budgets:");
             for (Agent a : group.getAgents()) {
-                // Mostra info basilari - il budget dettagliato è nell'oggetto Budget
-                System.out.println("     " + a + " - completed goals in WM: " 
-                        + a.getMemory().getWorkingMemory().stream()
+                System.out.println("     " + a 
+                        + " - B1(remaining)=" + a.getBudget().getMentalBudget()
+                        + ", done=" + a.getMemory().getWorkingMemory().stream()
                             .filter(atom -> atom.predicate().equals("done"))
                             .toList());
             }
