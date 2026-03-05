@@ -6,6 +6,8 @@ import java.util.stream.Collectors;
 
 public class Agent {
     private final String id;
+    private String groupId;
+    private int groupSize = 1; // |G| - used for mental cost sharing C1/|G|
     private final AgentMemory memory;
     private final Budget budget;
     private final CommunicationChannel comms;
@@ -17,6 +19,12 @@ public class Agent {
         this.budget = budget;
         this.comms = comms;
     }
+
+    public String getGroupId() { return groupId; }
+    public void setGroupId(String groupId) { this.groupId = groupId; }
+    public int getGroupSize() { return groupSize; }
+    public void setGroupSize(int groupSize) { this.groupSize = Math.max(1, groupSize); }
+    public Budget getBudget() { return budget; }
 
     public void setGoal(String goalPredicate) {
         Formula f = LDinfParser.parse(goalPredicate);
@@ -58,7 +66,49 @@ public class Agent {
         return actionTaken;
     }
 
-    private boolean performBestActionFor(Atom targetGoal) {
+    /**
+     * Verifica se l'agente può fare progressi verso un goal specifico
+     * (ha regole applicabili e budget sufficiente).
+     */
+    public boolean canMakeProgressOn(Atom targetGoal) {
+        List<Implication> potentialRules = memory.getKnowledgeBase().stream()
+                .filter(impl -> impl.conclusion().equals(targetGoal))
+                .collect(Collectors.toList());
+
+        if (potentialRules.isEmpty()) return false;
+
+        for (Implication rule : potentialRules) {
+            List<Atom> missingPremises = rule.premises().stream()
+                    .filter(p -> !memory.getWorkingMemory().contains(p))
+                    .collect(Collectors.toList());
+
+            if (missingPremises.isEmpty()) {
+                String baseActionName = extractActionName(rule.conclusion());
+                if (hasAffordableAction(baseActionName)) return true;
+            } else {
+                for (Atom missing : missingPremises) {
+                    String missingActionName = extractActionName(missing);
+                    if (hasAffordableAction(missingActionName)) return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private boolean hasAffordableAction(String actionName) {
+        Set<String> equivalentActions = memory.getEquivalentActions(actionName);
+        for (String actName : equivalentActions) {
+            ActionCost cost = memory.getActionCosts().get(actName);
+            if (cost != null) {
+                if (memory.isActionEnabled(actName) && budget.canAfford(cost.mentalCost(), cost.physicalResources())) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    public boolean performBestActionFor(Atom targetGoal) {
         // 1. Trova tutte le regole che CONCLUDONO con il goal target
         List<Implication> potentialRules = memory.getKnowledgeBase().stream()
                 .filter(impl -> impl.conclusion().equals(targetGoal))
@@ -137,28 +187,35 @@ public class Agent {
     }
 
     // Metodo helper per generare candidati dato un nome azione (astrae la logica di equivalenza)
+    // Implementa: can_doG(φA) iff ∃i∈G with φA ∈ A(i,w) ∩ H(i,w) and φA = F(i,w,φA)
+    // NOTA: H(i,w) si applica SOLO alle azioni fisiche (AtmA), non alle azioni mentali
     private void generateCandidatesForAction(String actionName, List<ActionCandidate> candidates) {
         Set<String> equivalentActions = memory.getEquivalentActions(actionName);
         for (String actName : equivalentActions) {
             ActionCost cost = memory.getActionCosts().get(actName);
             
-            // 1. Azione Fisica
+            // 1. Azione Fisica: φA ∈ A(i,w) ∩ H(i,w)
             if (cost != null) {
+                // H(i,w) check: l'agente deve essere abilitato dal gruppo per questa azione fisica
+                if (!memory.isActionEnabled(actName)) continue;
                 if (budget.canAfford(cost.mentalCost(), cost.physicalResources())) {
                     int pref = memory.getPreference(actName);
                     candidates.add(new ActionCandidate(actName, cost, pref, true));
                 }
             } 
-            // 2. Inferenza (Azione Mentale)
+            // 2. Inferenza (Azione Mentale) — H non si applica
+            // enabled_w(G,α): C1(j,α,w)/|G| ≤ min_{h∈G} B1(h,w)
             else {
-                // Verifichiamo che non sia un'astrazione di un fisico (es. cook_main_dish)
+                boolean isInEquivalenceFamily = equivalentActions.size() > 1;
                 boolean isAbstractForPhysical = equivalentActions.stream()
                         .anyMatch(eq -> memory.getActionCosts().containsKey(eq));
 
-                if (!isAbstractForPhysical) {
-                    int mentalCost = memory.getBaseInferenceCost();
-                    if (budget.canAfford(mentalCost, Collections.emptyMap())) {
-                        ActionCost infCost = new ActionCost(actName, mentalCost, Collections.emptyMap());
+                if (!isAbstractForPhysical && !isInEquivalenceFamily) {
+                    // Costo mentale diviso per |G| (cost sharing dal paper)
+                    int baseCost = memory.getBaseInferenceCost();
+                    int sharedCost = Math.max(1, baseCost / groupSize);
+                    if (budget.canAfford(sharedCost, Collections.emptyMap())) {
+                        ActionCost infCost = new ActionCost(actName, sharedCost, Collections.emptyMap());
                         candidates.add(new ActionCandidate(actName, infCost, 0, false));
                     }
                 }

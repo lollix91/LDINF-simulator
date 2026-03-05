@@ -1,0 +1,4 @@
+# H(i,w): Physical actions this agent is enabled to perform
+# Agent 2 is enabled for clearing/cleaning and setting the table
+clear_table
+set_table

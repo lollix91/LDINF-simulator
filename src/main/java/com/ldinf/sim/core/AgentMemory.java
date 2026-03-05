@@ -13,6 +13,8 @@ public class AgentMemory {
     private int baseInferenceCost = 1; 
     
     private final List<Atom> groupGoals = new ArrayList<>();
+    // H(i,w): set of physical actions that agent i is enabled by its group to perform
+    private final Set<String> enabledActions = new HashSet<>();
 
     public void addKnowledge(Formula f) {
         if (f == null) return;
@@ -51,6 +53,20 @@ public class AgentMemory {
     }
     public List<Atom> getGroupGoals() {
         return groupGoals;
+    }
+
+    // --- H (Roles/Enabling) ---
+    public void addEnabledAction(String actionName) {
+        enabledActions.add(actionName);
+    }
+    public Set<String> getEnabledActions() { return enabledActions; }
+    /**
+     * Checks if an action is enabled for this agent: H(i,w).
+     * If no enabled_actions are configured, all actions are enabled by default.
+     */
+    public boolean isActionEnabled(String actionName) {
+        if (enabledActions.isEmpty()) return true; // default: all enabled
+        return enabledActions.contains(actionName);
     }
 
     // --- NUOVI GETTER NECESSARI PER LA COPIA ---

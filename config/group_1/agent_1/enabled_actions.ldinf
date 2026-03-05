@@ -1,0 +1,5 @@
+# H(i,w): Physical actions this agent is enabled to perform
+# Agent 1 is enabled for cooking and setting the table
+cook_steak
+cook_pasta
+set_table

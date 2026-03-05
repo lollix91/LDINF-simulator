@@ -11,18 +11,18 @@ public class SimulationMain {
     private static final String CONFIG_ROOT = "config";
 
     public static void main(String[] args) {
-        System.out.println("--- L-DINF SIMULATION (Group Goals & Energy) ---");
+        System.out.println("--- L-DINF SIMULATION (Group Goals, Energy & Agent Lending) ---");
 
         CommunicationChannel channel = new CommunicationChannel();
         List<Agent> allAgents = new ArrayList<>();
-        // Mappa per tenere traccia del goal comune per ogni gruppo
-        Map<String, List<Atom>> groupGoalsMap = new HashMap<>();
+        List<Group> allGroups = new ArrayList<>();
         
         try {
             // 1. Scan for Group Folders
             List<Path> groupDirs = Files.list(Paths.get(CONFIG_ROOT))
                     .filter(Files::isDirectory)
                     .filter(p -> p.getFileName().toString().startsWith("group_"))
+                    .sorted()
                     .toList();
 
             for (Path groupPath : groupDirs) {
@@ -36,14 +36,14 @@ public class SimulationMain {
 
                 // 3. Load Common Goal
                 Path commonGoalPath = groupPath.resolve("common_goal.ldinf");
+                List<Atom> commonGoals = new ArrayList<>();
                 if (Files.exists(commonGoalPath)) {
                     List<String> lines = FileLoader.readRealFile(commonGoalPath.toString());
                     for (String line : lines) {
                         Formula f = LDinfParser.parse(line);
                         if (f instanceof Atom a) {
-                            sharedMemoryTemplate.addGroupGoal(a); // Usa il nuovo metodo
-                            // Nota: groupGoalsMap ora dovrebbe mappare String -> List<Atom> 
-                            groupGoalsMap.computeIfAbsent(groupId, k -> new ArrayList<>()).add(a);
+                            sharedMemoryTemplate.addGroupGoal(a);
+                            commonGoals.add(a);
                             System.out.println("  -> Added Common Goal: " + a);
                         }
                     }
@@ -54,10 +54,15 @@ public class SimulationMain {
                 if (budgetLines.isEmpty()) continue;
                 Budget totalGroupBudget = parseTotalBudget(budgetLines.get(0));
 
+                // Crea oggetto Group
+                Group group = new Group(groupId, totalGroupBudget, sharedMemoryTemplate);
+                commonGoals.forEach(group::addCommonGoal);
+
                 // 5. Detect Agents
                 List<Path> agentDirs = Files.list(groupPath)
                         .filter(Files::isDirectory)
                         .filter(p -> p.getFileName().toString().startsWith("agent_"))
+                        .sorted()
                         .toList();
 
                 int numAgents = agentDirs.size();
@@ -101,18 +106,30 @@ public class SimulationMain {
                     // G. Carica Working Memory Specifica (Bi)
                     List<String> wm = FileLoader.readRealFile(agentPath.resolve("working_memory.ldinf").toString());
                     wm.forEach(line -> myMemory.addKnowledge(LDinfParser.parse(line)));
-                    // ------------------------------------------------
+                    
+                    // H. Carica Azioni Abilitate - H(i,w) (Ruoli)
+                    Path enabledPath = agentPath.resolve("enabled_actions.ldinf");
+                    if (Files.exists(enabledPath)) {
+                        List<String> enabledLines = FileLoader.readRealFile(enabledPath.toString());
+                        enabledLines.forEach(line -> myMemory.addEnabledAction(line.trim()));
+                        System.out.println("  -> " + agentId + " enabled actions (H): " + myMemory.getEnabledActions());
+                    }
 
                     Budget myBudget = new Budget(energyPerAgent, resPerAgent);
                     Agent agent = new Agent(agentId, myMemory, myBudget, channel);
+                    agent.setGroupId(groupId);
+                    agent.setGroupSize(numAgents); // |G| for mental cost sharing C1/|G|
 
                     // Load Personal Goal
                     List<String> goalLines = FileLoader.readRealFile(agentPath.resolve("personal_goal.ldinf").toString());
                     if (!goalLines.isEmpty()) agent.setGoal(goalLines.get(0));
 
                     allAgents.add(agent);
+                    group.addAgent(agent);
                     channel.register(agent);
                 }
+                
+                allGroups.add(group);
             }
 
         } catch (IOException e) {
@@ -122,68 +139,81 @@ public class SimulationMain {
 
         // 8. Simulation Loop
         System.out.println("\n--- STARTING SIMULATION ---");
-        boolean commonGoalMet = false;
-        int maxSteps = 10;
+        boolean allGroupsDone = false;
+        int maxSteps = 15;
         int step = 0;
 
-        while (!commonGoalMet && step < maxSteps) {
+        while (!allGroupsDone && step < maxSteps) {
             step++;
             System.out.println("\n>>> STEP " + step);
             boolean anyoneDidAnything = false;
             
+            // 8a. Ogni agente ragiona e agisce
             for (Agent a : allAgents) {
-                // reasonAndAct ritorna true se l'agente ha compiuto una NUOVA azione/inferenza
                 boolean acted = a.reasonAndAct(); 
                 if (acted) anyoneDidAnything = true;
             }
             
-            // Check Common Goals
-            for (String groupId : groupGoalsMap.keySet()) {
-                List<Atom> goals = groupGoalsMap.get(groupId);
-                // Verifica se TUTTI i goal di questo gruppo sono soddisfatti
-                boolean allGoalsMet = goals.stream()
-                        .allMatch(g -> checkGroupGoal(groupId, g, allAgents));
-                        
-                if (allGoalsMet) {
-                    commonGoalMet = true; // Questo ferma la simulazione
-                    // System.out.println(">>> SUCCESS: Group " + groupId + " achieved ALL goals at step " + step);
+            // 8b. Controlla se qualche gruppo è in stallo e tenta il PRESTITO
+            for (Group group : allGroups) {
+                if (!group.allGoalsMet() && group.isStalled()) {
+                    System.out.println(">>> STALL DETECTED: Gruppo " + group.getGroupId() 
+                            + " non riesce a progredire. Tentativo di prestito agente...");
+                    
+                    List<Group> otherGroups = allGroups.stream()
+                            .filter(g -> g != group)
+                            .toList();
+                    
+                    boolean borrowed = group.tryBorrowAgent(otherGroups);
+                    if (borrowed) {
+                        anyoneDidAnything = true;
+                        System.out.println(">>> LENDING SUCCESS: Un agente prestato ha aiutato il gruppo " 
+                                + group.getGroupId());
+                    } else {
+                        System.out.println(">>> LENDING FAILED: Nessun agente disponibile da prestare al gruppo " 
+                                + group.getGroupId());
+                    }
                 }
             }
 
-            if (!anyoneDidAnything && !commonGoalMet) {
-                System.out.println(">>> STALL: No agents performed actions this step.");
+            // 8c. Verifica se tutti i gruppi hanno raggiunto i loro goal
+            allGroupsDone = allGroups.stream().allMatch(Group::allGoalsMet);
+            if (allGroupsDone) {
+                System.out.println(">>> ALL GROUPS ACHIEVED THEIR GOALS at step " + step);
+            }
+
+            if (!anyoneDidAnything && !allGroupsDone) {
+                System.out.println(">>> GLOBAL STALL: No agents performed actions this step.");
                 break;
             }
         }
         
         // 9. Final Report
         System.out.println("\n--- FINAL REPORT ---");
-        for (String groupId : groupGoalsMap.keySet()) {
-            List<Atom> goals = groupGoalsMap.get(groupId);
-            System.out.println("Group: " + groupId);
+        for (Group group : allGroups) {
+            System.out.println("Group: " + group.getGroupId());
             
-            for (Atom commonGoal : goals) {
-                boolean isCommonGoalMet = checkGroupGoal(groupId, commonGoal, allAgents);
-                System.out.println("  Goal (" + commonGoal + ") met? " + (isCommonGoalMet ? "YES" : "NO"));
+            for (Atom commonGoal : group.getCommonGoals()) {
+                boolean isGoalMet = group.isGoalMet(commonGoal);
+                System.out.println("  Goal (" + commonGoal + ") met? " + (isGoalMet ? "YES" : "NO"));
                 
-                if (isCommonGoalMet) {
-                    allAgents.stream()
-                        .filter(a -> a.toString().startsWith(groupId)) // Filtra per gruppo
+                if (isGoalMet) {
+                    group.getAgents().stream()
                         .filter(a -> a.getMemory().getWorkingMemory().contains(commonGoal))
                         .forEach(a -> System.out.println("     -> Known by " + a));
                 }
             }
+            
+            // Report budget residuo
+            System.out.println("  Agent budgets:");
+            for (Agent a : group.getAgents()) {
+                // Mostra info basilari - il budget dettagliato è nell'oggetto Budget
+                System.out.println("     " + a + " - completed goals in WM: " 
+                        + a.getMemory().getWorkingMemory().stream()
+                            .filter(atom -> atom.predicate().equals("done"))
+                            .toList());
+            }
         }
-    }
-
-    private static boolean checkGroupGoal(String groupId, Atom goal, List<Agent> agents) {
-        return agents.stream()
-            .filter(a -> a.toString().startsWith(groupId)) 
-            .anyMatch(a -> checkMemoryForAtom(a, goal));
-    }
-
-    private static boolean checkMemoryForAtom(Agent a, Atom goal) {
-        return a.getMemory().getWorkingMemory().contains(goal);
     }
 
     private static Budget parseTotalBudget(String line) {
