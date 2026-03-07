@@ -1,0 +1,100 @@
+# =============================================================
+# Case Study A: Intra-Group Cooperation (No Lending)
+# =============================================================
+# Each group is self-sufficient: all goals can be achieved
+# without borrowing agents from other groups.
+# LENDING is disabled.
+# =============================================================
+
+GROUP group_1 {
+
+    B1: 100
+    B2: ingredients:50, gas:20, plates:10, tablecloth:2
+
+    # --- Knowledge Base (Ki) ---
+    Ki: has(ingredients) & has(oven) ---> done(cook_main_dish)
+    Ki: has(plates) & has(tablecloth) ---> done(set_table)
+    Ki: done(cook_main_dish) & done(set_table) ---> done(prepare_banquet)
+    Ki: done(prepare_banquet) & done(clear_table) ---> done(clean_banquet)
+
+    # --- Equivalenze (Cl) ---
+    Cl: cook_main_dish = cook_pasta
+    Cl: cook_main_dish = cook_steak
+
+    # --- Costo Inferenza Mentale (C1) ---
+    C1: 2
+
+    # --- Costi Azioni Fisiche (C2) ---
+    C2: cook_pasta [ENERGY:5, ingredients:2, gas:2]
+    C2: cook_steak [ENERGY:8, ingredients:5, gas:3]
+    C2: set_table [ENERGY:2, plates:0, tablecloth:0]
+    C2: clear_table [ENERGY:45, plates:0]
+
+    # --- Preferenze (P) ---
+    P: cook_steak = 10
+    P: cook_pasta = 5
+    P: clear_table = 5
+
+    # --- Goal Comuni (G) ---
+    G: done(prepare_banquet)
+    G: done(clean_banquet)
+
+    # --- Lending disabilitato ---
+    LENDING: disabled
+
+    # --- Agenti ---
+    AGENT agent_1 {
+        Bi: has(ingredients)
+        Bi: has(oven)
+
+        Hi: cook_steak
+        Hi: cook_pasta
+        Hi: set_table
+
+        Gi: done(cook_main_dish)
+    }
+
+    AGENT agent_2 {
+        Bi: has(plates)
+        Bi: has(tablecloth)
+
+        Hi: clear_table
+        Hi: set_table
+
+        Gi: done(set_table)
+    }
+}
+
+GROUP group_2 {
+
+    B1: 60
+    B2: decorations:10, venue:1
+
+    # --- Knowledge Base (Ki) ---
+    Ki: has(decorations) & has(venue) ---> done(decorate_venue)
+
+    # --- Costo Inferenza Mentale (C1) ---
+    C1: 2
+
+    # --- Costi Azioni Fisiche (C2) ---
+    C2: decorate_venue [ENERGY:3, decorations:1, venue:0]
+
+    # --- Preferenze (P) ---
+    P: decorate_venue = 8
+
+    # --- Goal Comuni (G) ---
+    G: done(decorate_venue)
+
+    # --- Lending disabilitato ---
+    LENDING: disabled
+
+    # --- Agenti ---
+    AGENT agent_1 {
+        Bi: has(decorations)
+        Bi: has(venue)
+
+        Hi: decorate_venue
+
+        Gi: done(decorate_venue)
+    }
+}

@@ -15,6 +15,9 @@ public class Group {
     private final Budget totalBudget;
     private final AgentMemory sharedMemoryTemplate;
 
+    // LENDING: controlla se il gruppo partecipa al prestito agenti
+    private boolean lendingEnabled = true;
+
     // Agenti attualmente prestati AD altri gruppi
     private final Set<Agent> lentOut = new HashSet<>();
     // Agenti attualmente presi IN PRESTITO da altri gruppi
@@ -236,6 +239,8 @@ public class Group {
     public List<Atom> getCommonGoals() { return commonGoals; }
     public Budget getTotalBudget() { return totalBudget; }
     public AgentMemory getSharedMemoryTemplate() { return sharedMemoryTemplate; }
+    public boolean isLendingEnabled() { return lendingEnabled; }
+    public void setLendingEnabled(boolean lendingEnabled) { this.lendingEnabled = lendingEnabled; }
 
     @Override
     public String toString() {
